@@ -2,12 +2,12 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Runtime.CompilerServices;
-using System.Text;
 using Microsoft.Extensions.Logging;
 using OpenTelemetry;
 using OpenTelemetry.Context.Propagation;
-using OpenTelemetry.Internal;
+
+namespace consumer;
+
 /// <summary>
 /// A text map propagator for W3C trace context. See https://w3c.github.io/trace-context/.
 /// </summary>
@@ -17,30 +17,10 @@ public class KafkaContextPropagator : TextMapPropagator
 
     private const string TraceState = "tracestate";
 
-    private const string spanid = "Activity.SpanId";
-    private const string traceid = "Activity.TraceId";
+    private const string SpanIdKey = "Activity.SpanId";
+    private const string TraceIdKey = "Activity.TraceId";
 
-    private static readonly int VersionPrefixIdLength = "00-".Length;
 
-    private static readonly int TraceIdLength = "0af7651916cd43dd8448eb211c80319c".Length;
-
-    private static readonly int VersionAndTraceIdLength = "00-0af7651916cd43dd8448eb211c80319c-".Length;
-
-    private static readonly int SpanIdLength = "00f067aa0ba902b7".Length;
-
-    private static readonly int VersionAndTraceIdAndSpanIdLength = "00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-".Length;
-
-    private static readonly int OptionsLength = "00".Length;
-
-    private static readonly int TraceparentLengthV0 = "00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-00".Length;
-
-    private static readonly int TraceStateKeyMaxLength = 256;
-
-    private static readonly int TraceStateKeyTenantMaxLength = 241;
-
-    private static readonly int TraceStateKeyVendorMaxLength = 14;
-
-    private static readonly int TraceStateValueMaxLength = 256;
     private readonly ILogger<KafkaContextPropagator> _logger;
 
     public KafkaContextPropagator()
@@ -56,7 +36,7 @@ public class KafkaContextPropagator : TextMapPropagator
         _logger = loggerFactory.CreateLogger<KafkaContextPropagator>();
     }
     /// <inheritdoc />
-    public override ISet<string> Fields => new HashSet<string> { "tracestate", "traceparent", "Activity.TraceId", "Activity.SpanId" };
+    public override ISet<string> Fields => new HashSet<string> { TraceState, TraceParent, TraceIdKey, SpanIdKey };
 
     /// <inheritdoc />
     public override PropagationContext Extract<T>(PropagationContext context, T carrier, Func<T, string, IEnumerable<string>> getter)
@@ -77,20 +57,20 @@ public class KafkaContextPropagator : TextMapPropagator
         }
         try
         {
-            IEnumerable<string> enumerable = getter(carrier, "Activity.TraceId");
-            if (enumerable == null || enumerable.Count() != 1)
+            IEnumerable<string> traceIdEnumerable = getter(carrier, TraceIdKey);
+            if (traceIdEnumerable == null || traceIdEnumerable.Count() != 1)
             {
                 return context;
             }
             
-            ActivityTraceId traceId = ActivityTraceId.CreateFromString(enumerable.First());
+            ActivityTraceId traceId = ActivityTraceId.CreateFromString(traceIdEnumerable.First());
            
         
-            IEnumerable<string> enumerable2 = getter(carrier, "Activity.SpanId");
+            IEnumerable<string> spanIdEnumerable = getter(carrier, SpanIdKey);
             ActivitySpanId spanId;
-            if (enumerable2 != null && enumerable2.Any())
+            if (spanIdEnumerable != null && spanIdEnumerable.Any())
             {
-                spanId = ActivitySpanId.CreateFromString(enumerable2.First());
+                spanId = ActivitySpanId.CreateFromString(spanIdEnumerable.First());
             }
             else
                 return context;
@@ -99,8 +79,7 @@ public class KafkaContextPropagator : TextMapPropagator
         }
         catch (Exception ex)
         {
-          //  OpenTelemetryApiEventSource.Log.ActivityContextExtractException("TraceContextPropagator", ex);
-          _logger.LogError("Failed to extract context, Exception "+ex);
+            _logger.LogError("Failed to extract context, Exception "+ex);
 
             return context;
         }
@@ -132,8 +111,8 @@ public class KafkaContextPropagator : TextMapPropagator
         /*
          * Explicitly picking up the traceid and spanids
          */
-        setter(carrier,"Activity.TraceId", context.ActivityContext.TraceId.ToHexString());
-        setter(carrier,"Activity.SpanId", context.ActivityContext.SpanId.ToHexString());
+        setter(carrier,TraceIdKey, context.ActivityContext.TraceId.ToHexString());
+        setter(carrier,SpanIdKey, context.ActivityContext.SpanId.ToHexString());
         string traceState = context.ActivityContext.TraceState;
         if (traceState != null && traceState.Length > 0)
         {

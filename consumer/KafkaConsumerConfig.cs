@@ -1,5 +1,7 @@
 ﻿using System;
 
+namespace consumer;
+
 public class KafkaConsumerConfig
 {
     public string BootstrapServers { get; set; }
@@ -16,7 +18,3 @@ public class KafkaConsumerConfig
             return Confluent.Kafka.AutoOffsetReset.Earliest;
     }
 }
-
-
-
-

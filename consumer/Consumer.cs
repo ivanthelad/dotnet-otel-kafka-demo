@@ -1,33 +1,29 @@
-using Confluent.Kafka;
 using System;
-
-using System.Threading;
-using Microsoft.Extensions.Configuration;
 using System.Collections.Generic;
-using OpenTelemetry;
-using OpenTelemetry.Context.Propagation;
-
-
 using System.Diagnostics;
 using System.Text;
+using System.Threading;
+using Confluent.Kafka;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-
+using OpenTelemetry;
+using OpenTelemetry.Context.Propagation;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
+namespace consumer;
 
-
-class Consumer
+public class Consumer
 {
 
- //  private static readonly TextMapPropagator Propagator = Propagators.DefaultTextMapPropagator;
+    //  private static readonly TextMapPropagator Propagator = Propagators.DefaultTextMapPropagator;
 
     private static readonly KafkaContextPropagator Propagator = new KafkaContextPropagator();
 
     private static readonly ActivitySource ActivitySource = new(nameof(Consumer));
-    private static  ILogger<Consumer> _logger;
+    private static  ILogger<consumer.Consumer> _logger;
 
-    static void Main(string[] args)
+    public static void Main(string[] args)
     {
      
 
@@ -56,10 +52,10 @@ class Consumer
             cts.Cancel();
         };
         using var tracerProvider = Sdk.CreateTracerProviderBuilder()
-               .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService("kafka-consumer-service"))
-               .AddSource(nameof(Consumer)) // Add the namespace used for logging in your Kafka producer code
-               .AddConsoleExporter() // Optional: For exporting traces to the console (useful for testing)
-                           .AddOtlpExporter(options => options.Endpoint = new Uri("http://localhost:4317")).Build();
+            .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService("kafka-consumer-service"))
+            .AddSource(nameof(consumer.Consumer)) // Add the namespace used for logging in your Kafka producer code
+            .AddConsoleExporter() // Optional: For exporting traces to the console (useful for testing)
+            .AddOtlpExporter(options => options.Endpoint = new Uri("http://localhost:4317")).Build();
 
         using var loggerFactory = LoggerFactory.Create(builder =>
         {
@@ -72,7 +68,7 @@ class Consumer
         _logger = loggerFactory.CreateLogger<Consumer>();
 
         using (var consumer = new ConsumerBuilder<string, string>(
-            consumerConfig).Build())
+                   consumerConfig).Build())
         {
             consumer.Subscribe(topic);
             try
@@ -114,24 +110,24 @@ class Consumer
 
               
           
-                     _logger.LogInformation($"traceId: {traceId}");
+                    _logger.LogInformation($"traceId: {traceId}");
                     var startTimestamp = DateTime.UtcNow;
                     var endTimestamp = startTimestamp.AddSeconds(new Random().Next(1, 10));
                     /**
-                     * The below code demostrates pulling the context manually without the custom Propagator
-                     * 
-                     * if (traceId != null)
-                        parentContext = new ActivityContext(
-                                                           ActivityTraceId.CreateFromString(Encoding.UTF8.GetString(traceId)),
-                                                           ActivitySpanId.CreateRandom(),
-                                                           ActivityTraceFlags.Recorded, isRemote: true);
-                    else
-                      // if not found in header, create a new one
-                        parentContext = new ActivityContext(
-                                 ActivityTraceId.CreateRandom(),
-                                 ActivitySpanId.CreateRandom(),
-                                 ActivityTraceFlags.Recorded, isRemote: true);
-                    **/
+                 * The below code demostrates pulling the context manually without the custom Propagator
+                 *
+                 * if (traceId != null)
+                    parentContext = new ActivityContext(
+                                                       ActivityTraceId.CreateFromString(Encoding.UTF8.GetString(traceId)),
+                                                       ActivitySpanId.CreateRandom(),
+                                                       ActivityTraceFlags.Recorded, isRemote: true);
+                else
+                  // if not found in header, create a new one
+                    parentContext = new ActivityContext(
+                             ActivityTraceId.CreateRandom(),
+                             ActivitySpanId.CreateRandom(),
+                             ActivityTraceFlags.Recorded, isRemote: true);
+                **/
                     _logger.LogInformation($"{parentContext.ActivityContext.TraceId} {parentContext.ActivityContext.SpanId} {parentContext.ActivityContext.IsRemote} {parentContext.ActivityContext.TraceFlags}");
                     //   var parentActivity = ActivitySource.StartActivity("Receive", ActivityKind.Consumer, parentContext);
 

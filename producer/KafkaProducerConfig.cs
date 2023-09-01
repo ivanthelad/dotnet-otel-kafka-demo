@@ -1,5 +1,7 @@
 ﻿
 
+namespace  producer;
+
 	public class KafkaProducerConfig
     {
         public string BootstrapServers { get; set; }

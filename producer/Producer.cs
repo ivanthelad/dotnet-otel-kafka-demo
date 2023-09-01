@@ -12,7 +12,7 @@ using System.Collections.Generic;
 using OpenTelemetry;
 using Microsoft.Extensions.Logging.Console;
 using Microsoft.AspNetCore.Builder;
-
+namespace producer;
 class Producer
 {
     private static readonly ActivitySource ActivitySource = new(nameof(Producer));
