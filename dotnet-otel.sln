@@ -1,11 +1,11 @@
-﻿
+
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 16
 VisualStudioVersion = 25.0.1704.2
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "producer", "producer.csproj", "{BC5A30E4-B6C0-47C4-8688-2BB8DB8D9961}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "producer", "producer/producer.csproj", "{BC5A30E4-B6C0-47C4-8688-2BB8DB8D9961}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "consumer", "..\consumer\consumer.csproj", "{A702A0EC-1503-4FD3-9815-794B2E1EF684}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "consumer", "consumer/consumer.csproj", "{A702A0EC-1503-4FD3-9815-794B2E1EF684}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

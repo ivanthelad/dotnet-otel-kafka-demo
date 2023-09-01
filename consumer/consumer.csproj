@@ -8,6 +8,9 @@
         <StartupObject>Consumer</StartupObject>
 
   </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Confluent.Kafka" Version="1.9.3" />
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="6.0.0" />
@@ -26,5 +29,17 @@
     <PackageReference Include="OpenTelemetry.Instrumentation.GrpcNetClient" Version="1.5.0-beta.1" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.5.0-beta.1" />
     <PackageReference Include="OpenTelemetry.Instrumentation.SqlClient" Version="1.5.0-beta.1" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="assets\" />
+    <Folder Include="obj\" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Remove="appsettings.json" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="appsettings.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </EmbeddedResource>
   </ItemGroup>
 </Project>

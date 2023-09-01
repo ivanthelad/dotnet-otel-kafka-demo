@@ -4,73 +4,64 @@ using Microsoft.Extensions.Configuration;
 using System.Diagnostics;
 using System.Text;
 using Microsoft.Extensions.Logging;
-using OpenTelemetry;
 using OpenTelemetry.Context.Propagation;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using System.Collections.Generic;
-using OpenTelemetry.Metrics;
-using OpenTelemetry.Trace;
+
 using OpenTelemetry;
-using OpenTelemetry.Logs;
+using Microsoft.Extensions.Logging.Console;
+using Microsoft.AspNetCore.Builder;
+
 class Producer
 {
     private static readonly ActivitySource ActivitySource = new(nameof(Producer));
-    private static readonly TextMapPropagator Propagator = Propagators.DefaultTextMapPropagator;
+    private static readonly KafkaContextPropagator Propagator = new KafkaContextPropagator();
 
-    private readonly ILogger<Producer> logger;
+    private static readonly ILogger<Producer> _logger;
+
     class SendKafkaMessage
     {
-        private readonly ILogger<SendKafkaMessage> logger;
+        private ProducerConfig producerConfig;
+        private readonly ILogger<SendKafkaMessage> _logger;
         IConfiguration configuration;
         public string Key { get; set; }
         public string Value { get; set; }
-        public SendKafkaMessage(string file)
-        {
-            configuration = new ConfigurationBuilder()
-            .AddIniFile(file)
-            .Build();
-        }
 
 
-        public void sendEvent(string topic)
+        public SendKafkaMessage()
+
         {
-            using (var producer = new ProducerBuilder<string, string>(
-                configuration.AsEnumerable()).Build())
+            using var loggerFactory = LoggerFactory.Create(builder =>
             {
-                var numProduced = 0;
-                Random rnd = new Random();
-                const int numMessages = 10;
-                string[] users = { "eabara", "jsmith", "sgarcia", "jbernard", "htanaka", "awalther" };
-                string[] items = { "book", "alarm clock", "t-shirts", "gift card", "batteries" };
-                for (int i = 0; i < numMessages; ++i)
-                {
-                    var user = users[rnd.Next(users.Length)];
-                    var item = items[rnd.Next(items.Length)];
+                builder
+                    .AddFilter("Microsoft", LogLevel.Warning)
+                    .AddFilter("System", LogLevel.Warning)
+                    .AddFilter("LoggingConsoleApp.Program", LogLevel.Debug)
+                    .AddConsole();
+            });
+            _logger = loggerFactory.CreateLogger<SendKafkaMessage>();
 
-                    producer.Produce(topic, new Message<string, string> { Key = user, Value = item },
-                        (deliveryReport) =>
-                        {
-                            if (deliveryReport.Error.Code != ErrorCode.NoError)
-                            {
-                                Console.WriteLine($"Failed to deliver message: {deliveryReport.Error.Reason}");
-                            }
-                            else
-                            {
-                                Console.WriteLine($"Produced event to topic {topic}: key = {user,-10} value = {item}");
-                                numProduced += 1;
-                            }
-                        });
-                }
+            configuration = new ConfigurationBuilder().AddJsonFile("appsettings.json").Build();
 
-                producer.Flush(TimeSpan.FromSeconds(10));
-                Console.WriteLine($"{numProduced} messages were produced to topic {topic}");
-            }
+
+            var kafkaProducerConfig = new KafkaProducerConfig();
+            configuration.GetSection("KafkaProducerConfig").Bind(kafkaProducerConfig);
+            producerConfig = new ProducerConfig
+            {
+                BootstrapServers = kafkaProducerConfig.BootstrapServers,
+                ClientId = kafkaProducerConfig.ClientId,
+                Acks = (Acks)Enum.Parse(typeof(Acks), kafkaProducerConfig.Acks, ignoreCase: true),
+                // Set other properties as needed
+            };
         }
+
+
 
 
         private void InjectHeader(Headers headers, string key, string value)
         {
+            _logger.LogInformation("value and key = "+ value+ ", "+key);
             try
             {
                 if (headers == null)
@@ -82,32 +73,45 @@ class Producer
             }
             catch (Exception ex)
             {
-                this.logger.LogError(ex, "Failed to inject trace context.");
+                this._logger.LogError(ex, "Failed to inject trace context.");
             }
         }
 
-        public void sendOtelTracedMessage(String topic)
+        public void sendOtelTracedMessage(String topic, String message)
         {
 
             var activityName = "send";
-
+            _logger.LogInformation("Sending a Otel traced message ");
 
             // builder.AddOtlpExporter(options => options.Endpoint = new Uri("http://localhost:4317"));
             AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
+            _logger.LogInformation("Starting the Kafka producer");
+     //       OpenTelemetry.Sdk.SetDefaultTextMapPropagator(new CompositeTextMapPropagator(new TextMapPropagator[]
+     //    {
+      //             new BaggagePropagator(),
+      //          new TraceContextPropagator(),
+      //   }));
+
+            var resourceBuilder =
+    ResourceBuilder
+        .CreateDefault()
+        .AddService(serviceName: "kafka-producer-service", serviceVersion: "1.1")
+        .AddAttributes(new Dictionary<string, object>
+        {
+            ["environment.name"] = "production",
+            ["team.name"] = "backend"
+        });
 
             using var tracerProvider = Sdk.CreateTracerProviderBuilder()
-                   .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService("kafka-producer-service"))
+                   .SetResourceBuilder(resourceBuilder)
                    .AddSource(nameof(Producer))
                    .AddAspNetCoreInstrumentation()// Add the namespace used for logging in your Kafka producer code
                      .AddConsoleExporter().AddOtlpExporter().Build();
+            _logger.LogInformation("Starting the Kafka producer");
             using
              (var activity = ActivitySource.StartActivity(activityName, ActivityKind.Producer))
             {
-                // Depending on Sampling (and whether a listener is registered or not), the
-                // activity above may not be created.
-                // If it is created, then propagate its context.
-                // If it is not created, the propagate the Current context,
-                // if any.
+
                 ActivityContext contextToInject = default;
                 if (activity != null)
                 {
@@ -118,69 +122,90 @@ class Producer
                     contextToInject = Activity.Current.Context;
                 }
 
-                activity?.SetTag("greeting", "Hello World! From Producer");
-
-                //   AppContext1  -> kafka(Headers, ) -> AppContext2
+                activity?.SetTag("greeting", message);
                 using (var producer = new ProducerBuilder<string, string>(
-                      configuration.AsEnumerable()).Build())
+                      producerConfig).Build())
                 {
                     var numProduced = 0;
                     Random rnd = new Random();
-                    const int numMessages = 1;
                     string[] users = { "eabara", "jsmith", "sgarcia", "jbernard", "htanaka", "awalther" };
                     string[] items = { "book", "alarm clock", "t-shirts", "gift card", "batteries" };
-                    for (int i = 0; i < numMessages; ++i)
-                    {
-                        var user = users[rnd.Next(users.Length)];
-                        var item = items[rnd.Next(items.Length)];
+                    var user = users[rnd.Next(users.Length)];
+                    var item = items[rnd.Next(items.Length)];
+                    _logger.LogInformation($"Sending message to topic {topic}: key = {user,-10} value = {item}");
 
-                        var header = new Headers();
-                        header.Add("A.Entry", Encoding.UTF8.GetBytes("a simpple entry "));
+                    var header = new Headers();
+                    header.Add("A.Entry", Encoding.UTF8.GetBytes("a simpple entry "));
+                     Propagator.Inject(new PropagationContext(contextToInject, Baggage.Current), header, this.InjectHeader);
+                     
+                    // Inject the context into the Kafka message headers
+                    //   header.Add("Activity.TraceId", Encoding.UTF8.GetBytes(contextToInject.TraceId.ToString()));
+                    //   header.Add("Activity.SpanId", Encoding.UTF8.GetBytes(contextToInject.SpanId.ToString()));
+                    _logger.LogInformation($"Injecting trace context into Kafka message headers: {header.ToString()}");
+                    _logger.LogInformation(contextToInject.TraceId.ToString());
+                    _logger.LogInformation(contextToInject.SpanId.ToString());
+                    activity?.AddEvent(new ActivityEvent(user));
+                    activity?.AddEvent(new ActivityEvent(item));
+                    activity?.AddTag("messaging.system", "kafka");
+                    activity?.AddTag("messaging.destination", topic);
 
-                       // Propagator.Inject(new PropagationContext(contextToInject, Baggage.Current), header, this.InjectHeader);
-                        // Inject the context into the Kafka message headers
-                        header.Add("Activity.TraceId", Encoding.UTF8.GetBytes(contextToInject.TraceId.ToString()));
-                        header.Add("Activity.SpanId", Encoding.UTF8.GetBytes(contextToInject.SpanId.ToString()));
-                        activity?.AddEvent(new ActivityEvent("Example Event added to trace"));
-                        //   header.Add("Activity.ParentTraci", contextToInject.TraceId.ToHexString());
-                        Console.WriteLine($"Injecting trace context into Kafka message headers: {header.ToString()}");
-                        producer.Produce(topic, new Message<string, string> { Key = user, Value = item, Headers = header },
-                            (deliveryReport) =>
+
+                    Message<string, string> msg = new Message<string, string> { Key = user, Value = item, Headers = header };
+                                       int messagePayloadBytes = Encoding.UTF8.GetByteCount(msg.Value.ToString());
+                    activity?.AddTag("messaging.message_payload_size_bytes", messagePayloadBytes.ToString());
+                    producer.Produce(topic, msg,
+                        (deliveryReport) =>
+                        {
+                            if (deliveryReport.Error.Code != ErrorCode.NoError)
                             {
-                                if (deliveryReport.Error.Code != ErrorCode.NoError)
-                                {
-                                    Console.WriteLine($"Failed to deliver message: {deliveryReport.Error.Reason}");
-                                }
-                                else
-                                {
-                                    Console.WriteLine($"Produced event to topic {topic}: key = {user,-10} value = {item}");
-                                    numProduced += 1;
-                                }
-                            });
-                    }
+                                _logger.LogInformation($"Failed to deliver message: {deliveryReport.Error.Reason}");
+                            }
+                            else
+                            {
+                                _logger.LogInformation($"Produced event to topic {topic}: key = {user,-10} value = {item}",msg.Headers);
+                                numProduced += 1;
+                            }
+                        });
+
 
                     producer.Flush(TimeSpan.FromSeconds(10));
-                    Console.WriteLine($"{numProduced} messages were produced to topic {topic}");
+                    _logger.LogInformation($"{numProduced} messages were produced to topic {topic}");
                 }
             }
         }
-
-
     }
-
-    static void Main(string[] args)
+    private class MyTraceContextPropagator : TextMapPropagator
     {
-        if (args.Length != 1)
+        public override ISet<string> Fields => new HashSet<string>();
+
+        public override PropagationContext Extract<T>(PropagationContext context, T carrier, Func<T, string, IEnumerable<string>> getter)
         {
-            Console.WriteLine("Please provide the configuration file path as a command line argument");
+            var tid = ActivityTraceId.CreateFromBytes(Guid.Empty.ToByteArray());
+            var ctx = new ActivityContext(tid, ActivitySpanId.CreateRandom(), context.ActivityContext.TraceFlags, context.ActivityContext.TraceState, isRemote: true);
+            return new PropagationContext(ctx, context.Baggage);
         }
 
+        public override void Inject<T>(PropagationContext context, T carrier, Action<T, string, string> setter)
+        {
+            return;
+        }
+    }
+    static void Main(string[] args)
+    {
+        using var loggerFactory = LoggerFactory.Create(builder =>
+        {
+            builder.AddSimpleConsole(i => i.ColorBehavior = LoggerColorBehavior.Disabled);
+        });
+
+        var logger = loggerFactory.CreateLogger<Producer>();
+    
+
+        WebApplication.CreateBuilder(args);
+        SendKafkaMessage sendKafkaMessage = new SendKafkaMessage();
 
 
-        SendKafkaMessage sendKafkaMessage = new SendKafkaMessage(args[0]);
 
-
-        sendKafkaMessage.sendOtelTracedMessage("purchases");
+        sendKafkaMessage.sendOtelTracedMessage("purchases", args[0]);
 
     }
 

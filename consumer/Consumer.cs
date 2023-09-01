@@ -1,5 +1,6 @@
 using Confluent.Kafka;
 using System;
+
 using System.Threading;
 using Microsoft.Extensions.Configuration;
 using System.Collections.Generic;
@@ -13,28 +14,39 @@ using Microsoft.Extensions.Logging;
 
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
-using System.Collections;
+
+
 
 class Consumer
 {
 
-    private static readonly TextMapPropagator Propagator = Propagators.DefaultTextMapPropagator;
+ //  private static readonly TextMapPropagator Propagator = Propagators.DefaultTextMapPropagator;
+
+    private static readonly KafkaContextPropagator Propagator = new KafkaContextPropagator();
+
     private static readonly ActivitySource ActivitySource = new(nameof(Consumer));
+    private static  ILogger<Consumer> _logger;
 
     static void Main(string[] args)
     {
-        if (args.Length != 1)
+     
+
+    
+        IConfiguration  configuration = new ConfigurationBuilder().AddJsonFile("appsettings.json").Build();
+        var kafkaConsumerConfig = new KafkaConsumerConfig();
+        configuration.GetSection("KafkaConsumerConfig").Bind(kafkaConsumerConfig);
+        var consumerConfig = new ConsumerConfig
         {
-            Console.WriteLine("Please provide the configuration file path as a command line argument");
-        }
-
-        IConfiguration configuration = new ConfigurationBuilder()
-            .AddIniFile(args[0])
-            .Build();
-
-        configuration["group.id"] = "kafka-dotnet-getting-started";
-        configuration["auto.offset.reset"] = "earliest";
-
+            BootstrapServers = kafkaConsumerConfig.BootstrapServers,
+            ClientId = kafkaConsumerConfig.ClientId,
+            Acks = (Acks)System.Enum.Parse(typeof(Acks), kafkaConsumerConfig.Acks, ignoreCase: true),
+            // Set other properties as needed
+            GroupId = kafkaConsumerConfig.GroupId,
+            AutoOffsetReset  = kafkaConsumerConfig.getAutoOffsetReset()
+       
+        };
+        // setting to this format so we can understand incoming  traceparetn headers 
+        Activity.DefaultIdFormat = ActivityIdFormat.W3C;
         const string topic = "purchases";
 
         CancellationTokenSource cts = new CancellationTokenSource();
@@ -44,14 +56,23 @@ class Consumer
             cts.Cancel();
         };
         using var tracerProvider = Sdk.CreateTracerProviderBuilder()
-
                .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService("kafka-consumer-service"))
                .AddSource(nameof(Consumer)) // Add the namespace used for logging in your Kafka producer code
                .AddConsoleExporter() // Optional: For exporting traces to the console (useful for testing)
                            .AddOtlpExporter(options => options.Endpoint = new Uri("http://localhost:4317")).Build();
 
+        using var loggerFactory = LoggerFactory.Create(builder =>
+        {
+            builder
+                .AddFilter("Microsoft", LogLevel.Warning)
+                .AddFilter("System", LogLevel.Warning)
+                .AddFilter("LoggingConsoleApp.Program", LogLevel.Debug)
+                .AddConsole();
+        });
+        _logger = loggerFactory.CreateLogger<Consumer>();
+
         using (var consumer = new ConsumerBuilder<string, string>(
-            configuration.AsEnumerable()).Build())
+            consumerConfig).Build())
         {
             consumer.Subscribe(topic);
             try
@@ -59,7 +80,7 @@ class Consumer
                 while (true)
                 {
                     var cr = consumer.Consume(cts.Token);
-                    Console.WriteLine($"Consumed event from topic {topic} with key {cr.Message.Key,-10} and value {cr.Message.Value} , and headers {cr.Message.ToString}  ");
+                    _logger.LogInformation($"Consumed event from topic {topic} with key {cr.Message.Key,-10} and value {cr.Message.Value} , and headers {cr.Message.ToString}  ");
 
                     // Print headers
                     var headers = cr.Message.Headers;
@@ -67,7 +88,7 @@ class Consumer
                     //   var context = Propagator.Extract(PropagationContext.Current, headers, (headers, name) => headers.GetValues(name));
 
 
-                    //var extractedContext = Propagator.Extract(default, headers, (h, key) => GetHeaderValues(h, key));
+                    PropagationContext parentContext = Propagator.Extract(default, headers, GetHeaderValues);
 
                     //Baggage.Current = extractedContext.Baggage;
                     var activityName = $"receive";
@@ -76,10 +97,10 @@ class Consumer
                     byte[] traceId = null;
                     byte[] spanId = null;
                     string traceFlagsString = "01"; // TraceFlags can be 0 or 1 (recorded or not)
-
+        
                     foreach (var header in cr.Message.Headers)
                     {
-                        Console.WriteLine($"Header: {header.Key} = {Encoding.UTF8.GetString(header.GetValueBytes())}");
+                        _logger.LogInformation($"Header: {header.Key} = {Encoding.UTF8.GetString(header.GetValueBytes())}");
                         if (header.Key == "Activity.TraceId")
                         {
                             traceId = header.GetValueBytes();
@@ -88,17 +109,18 @@ class Consumer
                         if (header.Key == "Activity.SpanId")
                         {
                             spanId = header.GetValueBytes();
-
                         }
                     }
 
               
           
-                       Console.WriteLine($"traceId: {traceId}");
+                     _logger.LogInformation($"traceId: {traceId}");
                     var startTimestamp = DateTime.UtcNow;
                     var endTimestamp = startTimestamp.AddSeconds(new Random().Next(1, 10));
-                    ActivityContext parentContext;
-                    if (traceId != null)
+                    /**
+                     * The below code demostrates pulling the context manually without the custom Propagator
+                     * 
+                     * if (traceId != null)
                         parentContext = new ActivityContext(
                                                            ActivityTraceId.CreateFromString(Encoding.UTF8.GetString(traceId)),
                                                            ActivitySpanId.CreateRandom(),
@@ -109,12 +131,13 @@ class Consumer
                                  ActivityTraceId.CreateRandom(),
                                  ActivitySpanId.CreateRandom(),
                                  ActivityTraceFlags.Recorded, isRemote: true);
-                    Console.WriteLine($"{parentContext.TraceId} {parentContext.SpanId} {parentContext.IsRemote} {parentContext.TraceFlags}");
+                    **/
+                    _logger.LogInformation($"{parentContext.ActivityContext.TraceId} {parentContext.ActivityContext.SpanId} {parentContext.ActivityContext.IsRemote} {parentContext.ActivityContext.TraceFlags}");
                     //   var parentActivity = ActivitySource.StartActivity("Receive", ActivityKind.Consumer, parentContext);
 
-                    using (var activity = ActivitySource.StartActivity("Receive", ActivityKind.Consumer, parentContext))
+                    using (var activity = ActivitySource.StartActivity("Receive", ActivityKind.Consumer, parentContext.ActivityContext))
                     {
-                        Console.WriteLine($"{activity?.Context.TraceId} {activity?.Context.SpanId} {activity?.Context.TraceFlags}");
+                        _logger.LogInformation($"{activity?.Context.TraceId} {activity?.Context.SpanId} {activity?.Context.TraceFlags}");
 
                         activity?.SetTag("message", cr.Message.Value);
                         activity?.SetTag("message33", cr.Message.Value);
@@ -123,12 +146,12 @@ class Consumer
                         // Your activity code here...
 
 
-                        using (var activity2 = ActivitySource.StartActivity("ReceiveOtherActivity", ActivityKind.Internal, parentContext))
+                        using (var secondactivty = ActivitySource.StartActivity("ReceiveOtherActivity", ActivityKind.Internal, parentContext.ActivityContext))
                         {
-                            Console.WriteLine($"{activity2?.Context.TraceId} {activity2?.Context.SpanId} {activity2?.Context.TraceFlags}");
+                            _logger.LogInformation($"{secondactivty?.Context.TraceId} {secondactivty?.Context.SpanId} {secondactivty?.Context.TraceFlags}");
 
-                            activity2?.SetTag("other", cr.Message.Value);
-                            activity2?.SetTag("other2", cr.Message.Value);
+                            secondactivty?.SetTag("other", cr.Message.Value);
+                            secondactivty?.SetTag("other2", cr.Message.Value);
                             Thread.Sleep(new Random().Next(200, 3000));
                             // Your activity code here...
                         }
@@ -137,8 +160,9 @@ class Consumer
                     //   using var parentActivity = ActivitySource.StartActivity(activityName,  ActivityKind.Consumer);
 
                     Thread.Sleep(new Random().Next(200, 3000));
+                    // need to stop and commit activity  if not in using scope
                     //parentActivity?.Stop();
-                    Console.WriteLine($"tester");
+                    _logger.LogInformation($"tester");
                 }
             }
             catch (OperationCanceledException)
@@ -156,12 +180,13 @@ class Consumer
         // Implement the logic to extract values from Kafka headers based on the key.
         // For example, you can use LINQ or any other method to find the values associated with the key.
         var values = new List<string>();
-
+        _logger.LogInformation("Pulling key  " + key + " ");
         foreach (var header in headers)
         {
             if (header.Key == key)
             {
-                values.Add(header.GetValueBytes().ToString());
+                _logger.LogInformation(">>>> header.Key  found " + header.Key + "="+Encoding.UTF8.GetString(header.GetValueBytes()));
+                values.Add(Encoding.UTF8.GetString(header.GetValueBytes()));
             }
         }
 
